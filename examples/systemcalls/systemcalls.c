@@ -64,9 +64,11 @@ bool do_exec(int count, ...)
             return false;
         case 0: // child process
             execv(command[0], command);
-            return false;
+            exit(-1);
         default: // parent process
-            waitpid(pid, &childstate, 0);
+            if (waitpid(pid, &childstate, 0) != pid) {
+                return false;
+            }
     }
 
     return WIFEXITED(childstate) && (WEXITSTATUS(childstate) == 0);
@@ -109,11 +111,13 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
 
             close(outfile);
             execv(command[0], command);
-            return false;
+            exit(-1);
         default: // parent process
             close(outfile);
-            waitpid(pid, &childstate, 0);
+            if (waitpid(pid, &childstate, 0) != pid) {
+                return false;
+            }
     }
 
-    return false;//WIFEXITED(childstate) && (WEXITSTATUS(childstate) == 0);
+    return WIFEXITED(childstate) && (WEXITSTATUS(childstate) == 0);
 }
