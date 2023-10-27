@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 if [ -z "$1" ] || [ -z "$2" ]; then
     echo "Usage: $0 <filesdir> <searchstr>"
@@ -13,18 +13,13 @@ if [ ! -d "${filesdir}" ]; then
     exit 1;
 fi
 
-filelist=()
-
-# get list of files in search directory and all subdirectories
-mapfile -d '' filelist < <(find -L "${filesdir}" -type f -print0)
+if [ -z "${searchstr}" ]; then
+    echo "<searchstr> should not be empty."
+    exit 1;
+fi
 
 # number of files found
-filecount=${#filelist[@]}
-
-strcount=0
-for filename in "${filelist[@]}"; do
-    # sum the number of 
-    strcount=$(( strcount + $(grep -c "${searchstr}" "${filename}") ))
-done
+filecount=$(find "${filesdir}" -type f | wc -l)
+strcount=$(grep -rh "${searchstr}" "${filesdir}" | wc -l)
 
 echo "The number of files are ${filecount} and the number of matching lines are ${strcount}"
