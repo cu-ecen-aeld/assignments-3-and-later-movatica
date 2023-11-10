@@ -5,6 +5,7 @@
 set -e
 set -u
 
+WORKDIR=$( dirname -- "$( readlink -f -- "$0"; )"; )
 NUMFILES=10
 WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
@@ -32,9 +33,9 @@ echo "Writing ${NUMFILES} files containing string ${WRITESTR} to ${WRITEDIR}"
 rm -rf "${WRITEDIR}"
 
 # create $WRITEDIR if not assignment1
-assignment=`cat conf/assignment.txt`
+assignment=$(cat conf/assignment.txt)
 
-if [ $assignment != 'assignment1' ]
+if [ "$assignment" != 'assignment1' ]
 then
 	mkdir -p "$WRITEDIR"
 
@@ -52,18 +53,18 @@ fi
 #make clean
 #make
 
-for i in $( seq 1 $NUMFILES)
+for i in $(seq 1 $NUMFILES)
 do
-	./writer "$WRITEDIR/${username}$i.txt" "$WRITESTR"
+	"${WORKDIR}/writer" "$WRITEDIR/${username}$i.txt" "$WRITESTR"
 done
 
-OUTPUTSTRING=$(./finder.sh "$WRITEDIR" "$WRITESTR")
+OUTPUTSTRING=$("${WORKDIR}/finder.sh" "$WRITEDIR" "$WRITESTR")
 
 # remove temporary directories
 rm -rf /tmp/aeld-data
 
 set +e
-echo ${OUTPUTSTRING} | grep "${MATCHSTR}"
+echo ${OUTPUTSTRING} | tee /tmp/assignment4-result.txt | grep "${MATCHSTR}"
 if [ $? -eq 0 ]; then
 	echo "success"
 	exit 0
