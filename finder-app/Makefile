@@ -1,6 +1,8 @@
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -g
 
+all: writer
+
 # the following two rules are implicit in GNU make
 # make them explicit for learning purposes
 writer: writer.o
