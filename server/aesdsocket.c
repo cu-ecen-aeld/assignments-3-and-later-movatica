@@ -76,16 +76,16 @@ int bind_to_port(const char* port) {
  **/
 void get_addr_str(struct sockaddr *sa, char **str) {
     switch(sa->sa_family) {
-        case AF_INET: /* ipv4 */
+        case AF_INET: { /* ipv4 */
             struct in_addr ina = ((struct sockaddr_in*)sa)->sin_addr;
             *str = calloc(sizeof(char), INET_ADDRSTRLEN);
             inet_ntop(AF_INET, &ina, *str, INET_ADDRSTRLEN);
-            break;
-        case AF_INET6: /* ipv6 */
+            break; }
+        case AF_INET6: {/* ipv6 */
             struct in6_addr in6a = ((struct sockaddr_in6*)sa)->sin6_addr;
             *str = calloc(sizeof(char), INET6_ADDRSTRLEN);
             inet_ntop(AF_INET6, &in6a, *str, INET6_ADDRSTRLEN);
-            break;
+            break; }
         default: /* should not happen, alloc an empty string just in case */
             *str = calloc(sizeof(char), 1);
             *str[0] = '\0';
@@ -120,6 +120,7 @@ void sighandler(int signal) {
         case SIGTERM:
             _doexit = true;
         default:
+            ;
     }
 }
 
