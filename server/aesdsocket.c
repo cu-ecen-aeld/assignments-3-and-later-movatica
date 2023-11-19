@@ -27,7 +27,7 @@ const char *tmpfilename = "/var/tmp/aesdsocketdata";
 /*
  * Globals
  **/
-bool doexit = false; /* controls the server loop */
+volatile bool _doexit = false; /* controls the server loop */
 
 
 /*
@@ -94,23 +94,20 @@ void get_addr_str(struct sockaddr *sa, char **str) {
 
 
 /* 
- * Read lines from file fdin and write each line to fdout until EOF of fdin is reached.
- * Returns the number of lines transfered.
- */
-int transfer_lines(int fdin, int fdout, int maxlines) {
-    int nlines = 0;
-    FILE *fin = fdopen(fdin, "r");
-    char *line = NULL;
-    size_t len = 0;
+ * Copy line from instream to outstream.
+ * Return number of bytes copied or -1 on error.
+ **/
+int transfer_line(FILE *instream, FILE *outstream) {
+    char *buffer = NULL;
+    size_t buflen = 0;
+    ssize_t result;
 
-    while (nlines < maxlines && getline(&line, &len, fin) != -1) {
-        syslog(LOG_DEBUG, "Received: %s", line);
-        write(fdout, line, len);
-        nlines++;
+    if ((result = getline(&buffer, &buflen, instream)) > 0) {
+        fputs(buffer, outstream);
     }
+    free(buffer);
 
-    free(line);
-    return nlines;
+    return result;
 }
 
 
@@ -121,7 +118,7 @@ void sighandler(int signal) {
     switch (signal) {
         case SIGINT:
         case SIGTERM:
-            doexit = true;
+            _doexit = true;
         default:
     }
 }
@@ -200,7 +197,7 @@ int main(int argc, char* argv[]) {
     socklen_t clientaddrlen = sizeof(clientaddr);
 
     /* server loop, exited by signals */
-    while (!doexit) {
+    while (!_doexit) {
         /* wait for connections */
         newsock = accept(sock, &clientaddr, &clientaddrlen);
 
@@ -215,18 +212,20 @@ int main(int argc, char* argv[]) {
         
         syslog(LOG_INFO, "Accepted connection from %s", clientip);
 
-        /* receive packets */
-        tmpfile = open(tmpfilename, O_CREAT | O_APPEND | O_WRONLY);
-        packetcnt = transfer_lines(newsock, tmpfile, 1);
-        fsync(tmpfile);
-        close(tmpfile);
-        syslog(LOG_DEBUG, "Received %d packets from %s", packetcnt, clientip);
+        FILE *fsock = fdopen(newsock, "a+");
+        FILE *tmpfile = fopen(tmpfilename, "a");
+        
+        int bytecnt = transfer_line(fsock, tmpfile);
+        syslog(LOG_DEBUG, "Received %d bytes from %s", bytecnt, clientip);
 
-        tmpfile = open(tmpfilename, O_RDONLY);
-        /* send file contents */
-        packetcnt = transfer_lines(tmpfile, newsock, 0);
-        close(tmpfile);
-        syslog(LOG_DEBUG, "Sent %d packets to %s", packetcnt, clientip);
+        tmpfile = freopen(tmpfilename, "r", tmpfile);
+
+        while ((bytecnt = transfer_line(tmpfile, fsock)) > 0) {
+            syslog(LOG_DEBUG, "Sent %d bytes to %s", bytecnt, clientip);
+        }
+        
+        fclose(tmpfile);
+        fclose(fsock);
 
         syslog(LOG_INFO, "Closed connection from %s", clientip);
 
