@@ -97,7 +97,7 @@ void get_addr_str(struct sockaddr *sa, char **str) {
  * Copy line from instream to outstream.
  * Return number of bytes copied or -1 on error.
  **/
-int transfer_line(FILE *instream, FILE *outstream) {
+ssize_t transfer_line(FILE *instream, FILE *outstream) {
     char *buffer = NULL;
     size_t buflen = 0;
     ssize_t result;
@@ -194,14 +194,13 @@ int main(int argc, char* argv[]) {
     
     fprintf(stdout, "Listening on %s\n", default_port);
 
-    int newsock, tmpfile, packetcnt;
     struct sockaddr clientaddr;
     socklen_t clientaddrlen = sizeof(clientaddr);
 
     /* server loop, exited by signals */
     while (!_doexit) {
         /* wait for connections */
-        newsock = accept(sock, &clientaddr, &clientaddrlen);
+        int newsock = accept(sock, &clientaddr, &clientaddrlen);
 
         if (newsock < 0) {
             syslog(LOG_DEBUG, "Error accepting connection");
@@ -217,15 +216,23 @@ int main(int argc, char* argv[]) {
         FILE *fsock = fdopen(newsock, "a+");
         FILE *tmpfile = fopen(tmpfilename, "a");
         
-        int bytecnt = transfer_line(fsock, tmpfile);
-        syslog(LOG_DEBUG, "Received %d bytes from %s", bytecnt, clientip);
+        ssize_t transres = transfer_line(fsock, tmpfile);
+        if (transres == -1) {
+            syslog(LOG_PERROR, "Error receiving from %s", clientip);
+        }
+        else {
+            syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, clientip);
+        }
 
         tmpfile = freopen(tmpfilename, "r", tmpfile);
 
-        while ((bytecnt = transfer_line(tmpfile, fsock)) > 0) {
-            syslog(LOG_DEBUG, "Sent %d bytes to %s", bytecnt, clientip);
+        while ((transres = transfer_line(tmpfile, fsock)) > 0) {
+            syslog(LOG_DEBUG, "Sent %ld bytes to %s", transres, clientip);
         }
-        
+        if (transres == -1) {
+            syslog(LOG_PERROR, "Error sending to %s", clientip);
+        }
+
         fclose(tmpfile);
         fclose(fsock);
 
@@ -236,8 +243,8 @@ int main(int argc, char* argv[]) {
     
     syslog(LOG_INFO, "Caught signal, exiting");
 
-    /* remove tempfile, note: posix has special tempfiles for this... */
-    unlink(tmpfilename);
+    close(sock);
+    unlink(tmpfilename); /* remove tempfile, note: posix has special tempfiles for this... */
 
     exit(0);
 }
