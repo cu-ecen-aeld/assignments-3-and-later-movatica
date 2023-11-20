@@ -104,6 +104,7 @@ int transfer_line(FILE *instream, FILE *outstream) {
 
     if ((result = getline(&buffer, &buflen, instream)) > 0) {
         fputs(buffer, outstream);
+        fflush(outstream);
     }
     free(buffer);
 
