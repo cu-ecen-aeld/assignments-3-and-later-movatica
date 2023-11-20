@@ -52,6 +52,9 @@ int bind_to_port(const char* port) {
 
         if (sock == -1)
             continue;
+    
+        const char reuse = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(char));
 
         if (bind(sock, si->ai_addr, si->ai_addrlen) == 0)
             break;
