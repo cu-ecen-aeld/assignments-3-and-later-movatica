@@ -31,50 +31,6 @@ volatile bool _doexit = false; /* controls the server loop */
 
 
 /*
- * Create a socket that binds to the specified port.
- */
-int bind_to_port(const char* port) {
-    int result, sock;
-    struct addrinfo hints = {0}, *sockinfo, *si;
-
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-
-    result = getaddrinfo(NULL, port, &hints, &sockinfo);
-    if (result != 0) {
-        syslog(LOG_DEBUG, "getaddrinfo: %s\n", gai_strerror(result));
-        return -1;
-    }
-
-    for (si = sockinfo; si != NULL; si = si->ai_next) {
-        sock = socket(si->ai_family, si->ai_socktype, si->ai_protocol);
-
-        if (sock == -1)
-            continue;
-    
-        const char reuse = 1;
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(char));
-        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(char));
-
-        if (bind(sock, si->ai_addr, si->ai_addrlen) == 0)
-            break;
-
-        close(sock);
-    }
-
-    freeaddrinfo(sockinfo);
-
-    if (si == NULL) {
-        syslog(LOG_DEBUG, "Error binding to port %s!\n", port);
-        return -1;
-    }
-
-    return sock;
-}
-
-
-/*
  * Get the ip address from a sockaddr struct as string.
  * Allocate output parameter `str` accordingly.
  **/
@@ -94,6 +50,58 @@ void get_addr_str(struct sockaddr *sa, char **str) {
             *str = calloc(sizeof(char), 1);
             *str[0] = '\0';
     }
+}
+
+
+/*
+ * Create a socket that binds to the specified port.
+ */
+int bind_to_port(const char* port) {
+    int result, sock;
+    struct addrinfo hints = {0}, *sockinfo, *si;
+
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    result = getaddrinfo(NULL, port, &hints, &sockinfo);
+    if (result != 0) {
+        syslog(LOG_PERROR, "getaddrinfo: %s\n", gai_strerror(result));
+        return -1;
+    }
+
+    for (si = sockinfo; si != NULL; si = si->ai_next) {
+        sock = socket(si->ai_family, si->ai_socktype, si->ai_protocol);
+
+        if (sock == -1)
+            continue;
+    
+        const char reuse = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(char));
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(char));
+
+        if (bind(sock, si->ai_addr, si->ai_addrlen) == 0)
+            break;
+
+        close(sock);
+    }
+
+
+    if (si == NULL) {
+        syslog(LOG_PERROR, "Error binding to port %s!\n", port);
+        freeaddrinfo(sockinfo);
+    
+        return -1;
+    }
+
+    char *sockaddr;
+    get_addr_str(si->ai_addr, &sockaddr);
+    syslog(LOG_INFO, "Socket bound to %s\n", sockaddr);
+
+    free(sockaddr);
+    freeaddrinfo(sockinfo);
+
+    return sock;
 }
 
 
@@ -192,7 +200,7 @@ int main(int argc, char* argv[]) {
 
     /* now start listening for connections */
     if (listen(sock, 5) != 0) {
-        syslog(LOG_DEBUG, "Error listening on port %s!\n", default_port);
+        syslog(LOG_PERROR, "Error listening on port %s!\n", default_port);
         exit(-1);
     }
     
@@ -207,7 +215,7 @@ int main(int argc, char* argv[]) {
         int newsock = accept(sock, &clientaddr, &clientaddrlen);
 
         if (newsock < 0) {
-            syslog(LOG_DEBUG, "Error accepting connection");
+            syslog(LOG_PERROR, "Error accepting connection");
             continue;
         }
 
