@@ -34,22 +34,25 @@ volatile bool _doexit = false; /* controls the server loop */
  * Get the ip address from a sockaddr struct as string.
  * Allocate output parameter `str` accordingly.
  **/
-void get_addr_str(struct sockaddr *sa, char **str) {
+char *get_addr_str(struct sockaddr *sa) {
+    char *str;
+
     switch(sa->sa_family) {
         case AF_INET: { /* ipv4 */
             struct in_addr ina = ((struct sockaddr_in*)sa)->sin_addr;
-            *str = calloc(sizeof(char), INET_ADDRSTRLEN);
-            inet_ntop(AF_INET, &ina, *str, INET_ADDRSTRLEN);
+            str = calloc(sizeof(char), INET_ADDRSTRLEN);
+            inet_ntop(AF_INET, &ina, str, INET_ADDRSTRLEN);
             break; }
         case AF_INET6: {/* ipv6 */
             struct in6_addr in6a = ((struct sockaddr_in6*)sa)->sin6_addr;
-            *str = calloc(sizeof(char), INET6_ADDRSTRLEN);
-            inet_ntop(AF_INET6, &in6a, *str, INET6_ADDRSTRLEN);
+            str = calloc(sizeof(char), INET6_ADDRSTRLEN);
+            inet_ntop(AF_INET6, &in6a, str, INET6_ADDRSTRLEN);
             break; }
-        default: /* should not happen, alloc an empty string just in case */
-            *str = calloc(sizeof(char), 1);
-            *str[0] = '\0';
+        default: /* should not happen */
+            return "";
     }
+
+    return str;
 }
 
 
@@ -58,13 +61,14 @@ void get_addr_str(struct sockaddr *sa, char **str) {
  */
 int bind_to_port(const char* port) {
     int result, sock;
-    struct addrinfo hints = {0}, *sockinfo, *si;
+    struct addrinfo hints = {0}, *sockinfo = NULL, *si;
 
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
     result = getaddrinfo(NULL, port, &hints, &sockinfo);
+
     if (result != 0) {
         syslog(LOG_PERROR, "getaddrinfo: %s\n", gai_strerror(result));
         return -1;
@@ -76,9 +80,9 @@ int bind_to_port(const char* port) {
         if (sock == -1)
             continue;
     
-        const char reuse = 1;
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(char));
-        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(char));
+        const char enable = 1; /* boolean integer flag */
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(char));
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(char));
 
         if (bind(sock, si->ai_addr, si->ai_addrlen) == 0)
             break;
@@ -86,19 +90,16 @@ int bind_to_port(const char* port) {
         close(sock);
     }
 
-
     if (si == NULL) {
         syslog(LOG_PERROR, "Error binding to port %s!\n", port);
-        freeaddrinfo(sockinfo);
-    
-        return -1;
+        sock = -1;
+    }
+    else {
+        char *sockaddr = get_addr_str(si->ai_addr);
+        syslog(LOG_INFO, "Socket bound to %s\n", sockaddr);
+        free(sockaddr);
     }
 
-    char *sockaddr;
-    get_addr_str(si->ai_addr, &sockaddr);
-    syslog(LOG_INFO, "Socket bound to %s\n", sockaddr);
-
-    free(sockaddr);
     freeaddrinfo(sockinfo);
 
     return sock;
@@ -114,10 +115,13 @@ ssize_t transfer_line(FILE *instream, FILE *outstream) {
     size_t buflen = 0;
     ssize_t result;
 
-    if ((result = getline(&buffer, &buflen, instream)) > 0) {
+    result = getline(&buffer, &buflen, instream);
+    
+    if (result > 0) {
         fputs(buffer, outstream);
         fflush(outstream);
     }
+
     free(buffer);
 
     return result;
@@ -173,6 +177,7 @@ int main(int argc, char* argv[]) {
 
     /* parse commandline options */
     bool daemonize = false;
+
     if (argc > 1
             && strlen(argv[1]) > 1
             && !strncmp("-d", argv[1], 2)) {
@@ -220,8 +225,7 @@ int main(int argc, char* argv[]) {
         }
 
         /* its actually some hazzle to generically get the client ip address */
-        char *clientip;
-        get_addr_str(&clientaddr, &clientip);
+        char *clientip = get_addr_str(&clientaddr);
         
         syslog(LOG_INFO, "Accepted connection from %s", clientip);
 
@@ -229,6 +233,7 @@ int main(int argc, char* argv[]) {
         FILE *tmpfile = fopen(tmpfilename, "a");
         
         ssize_t transres = transfer_line(fsock, tmpfile);
+
         if (transres == -1) {
             syslog(LOG_PERROR, "Error receiving from %s", clientip);
         }
@@ -241,6 +246,7 @@ int main(int argc, char* argv[]) {
         while ((transres = transfer_line(tmpfile, fsock)) > 0) {
             syslog(LOG_DEBUG, "Sent %ld bytes to %s", transres, clientip);
         }
+
         if (transres == -1) {
             syslog(LOG_PERROR, "Error sending to %s", clientip);
         }
