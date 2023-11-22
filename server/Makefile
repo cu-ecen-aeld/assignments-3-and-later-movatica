@@ -6,7 +6,11 @@ aesdsocket: aesdsocket.c
 
 all: aesdsocket
 
+.PHONY: clean
 clean:
 	rm -f aesdsocket *.o
 
-.PHONY: clean
+.PHONY: install
+install:
+	cp -f aesdsocket /usr/bin/aesdsocket
+	cp -f aesdsocket-start-stop /etc/init.d/S99aesdsocket
