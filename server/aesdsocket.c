@@ -231,6 +231,9 @@ int main(int argc, char* argv[]) {
 
         FILE *fsock = fdopen(newsock, "a+");
         FILE *tmpfile = fopen(tmpfilename, "a");
+ 
+        setlinebuf(tmpfile);
+        setlinebuf(fsock);
         
         ssize_t transres = transfer_line(fsock, tmpfile);
 
@@ -240,15 +243,10 @@ int main(int argc, char* argv[]) {
         else {
             syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, clientip);
         }
-
         tmpfile = freopen(tmpfilename, "r", tmpfile);
 
         while ((transres = transfer_line(tmpfile, fsock)) > 0) {
             syslog(LOG_DEBUG, "Sent %ld bytes to %s", transres, clientip);
-        }
-
-        if (transres == -1) {
-            syslog(LOG_PERROR, "Error sending to %s", clientip);
         }
 
         fclose(tmpfile);
