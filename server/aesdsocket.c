@@ -80,9 +80,9 @@ int bind_to_port(const char* port) {
         if (sock == -1)
             continue;
     
-        const char enable = 1; /* boolean integer flag */
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(char));
-        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(char));
+        const int enable = 1; /* boolean integer flag */
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
+        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(enable));
 
         if (bind(sock, si->ai_addr, si->ai_addrlen) == 0)
             break;
@@ -178,9 +178,7 @@ int main(int argc, char* argv[]) {
     /* parse commandline options */
     bool daemonize = false;
 
-    if (argc > 1
-            && strlen(argv[1]) > 1
-            && !strncmp("-d", argv[1], 2)) {
+    if (argc > 1 && !strncmp(argv[1], "-d", 2)) {
         daemonize = true;
     }
 
