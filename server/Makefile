@@ -1,6 +1,6 @@
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -g -Wall -Wpedantic -Werror
-LDLIBS = -lpthread
+LDLIBS = -lpthread -lrt
 
 aesdsocket: aesdsocket.c
 	$(CC) $(CFLAGS) $(LDFLAGS) $^ $(LOADLIBS) $(LDLIBS) -o $@

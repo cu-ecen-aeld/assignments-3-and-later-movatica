@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 
@@ -189,6 +190,55 @@ void fork_and_exit() {
 
 
 /*
+ * Timer thread function to write timestamps
+ **/
+void timer_thread(union sigval sigev_value) {
+    pthread_mutex_t *tmpfile_lock = (pthread_mutex_t *)sigev_value.sival_ptr;
+
+    char timestamp[64];
+    time_t now = time(NULL);
+    struct tm *local_now = localtime(&now);
+    strftime(timestamp, sizeof(timestamp), "timestamp:%a, %d %b %Y %T %z\n", local_now);
+
+    syslog(LOG_INFO, "Writing %s to tmpfile\n", timestamp);
+
+    pthread_mutex_lock(tmpfile_lock);
+
+    FILE *tmpfile = fopen(tmpfilename, "a");
+    fputs(timestamp, tmpfile);
+    fclose(tmpfile);
+
+    pthread_mutex_unlock(tmpfile_lock);
+}
+
+
+/*
+ * Create timer that spawns a timestamp writer thread every 10 seconds
+ **/
+int create_timestamp_timer(timer_t *timer_id, pthread_mutex_t *tmpfile_lock) {
+    struct sigevent sigev = { 0 };
+    struct itimerspec timespec = {
+        .it_value.tv_sec = 0,
+        .it_value.tv_nsec = 1,
+        .it_interval.tv_sec = 10,
+        .it_interval.tv_nsec = 0,
+    };
+
+    sigev.sigev_notify = SIGEV_THREAD;
+    sigev.sigev_notify_function = &timer_thread;
+    sigev.sigev_value.sival_ptr = tmpfile_lock;
+
+    int result = timer_create(CLOCK_REALTIME, &sigev, timer_id);
+
+    if (result == 0) {
+        result = timer_settime(*timer_id, 0, &timespec, NULL);
+    }
+
+    return result;
+}
+
+
+/*
  * Thread function to handle incoming connections
  * Needs to take care of its writelock and filestreams
  * FIXME: Properly implement interruption using pthread_cancel and pthread_cleanup_push/pull
@@ -292,11 +342,11 @@ int main(int argc, char* argv[]) {
 
     /* now start listening for connections */
     if (listen(sock, 5) != 0) {
-        syslog(LOG_PERROR, "Error listening on port %s!\n", default_port);
+        syslog(LOG_PERROR, "Error listening on port %s!", default_port);
         exit(-1);
     }
 
-    fprintf(stdout, "Listening on %s\n", default_port);
+    syslog(LOG_INFO, "Listening on %s\n", default_port);
 
     struct sockaddr clientaddr;
     socklen_t clientaddrlen = sizeof(clientaddr);
@@ -305,6 +355,11 @@ int main(int argc, char* argv[]) {
 
     pthread_mutex_t tmpfile_lock;
     pthread_mutex_init(&tmpfile_lock, NULL);
+
+    timer_t timestamp_timer_id;
+    if (create_timestamp_timer(&timestamp_timer_id, &tmpfile_lock) != 0) {
+        syslog(LOG_PERROR, "Failed to arm timer");
+    }
 
     /* server loop, exited by signals */
     while (!_doexit) {
@@ -370,8 +425,9 @@ int main(int argc, char* argv[]) {
         child = next;
     }
 
-    pthread_mutex_destroy(&tmpfile_lock);
     close(sock);
+    timer_delete(timestamp_timer_id);
+    pthread_mutex_destroy(&tmpfile_lock);
     unlink(tmpfilename); /* remove tempfile, note: posix has special tempfiles for this... */
 
     exit(0);
