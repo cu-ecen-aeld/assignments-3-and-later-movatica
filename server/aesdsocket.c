@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -28,6 +29,25 @@ const char *tmpfilename = "/var/tmp/aesdsocketdata";
  * Globals
  **/
 volatile bool _doexit = false; /* controls the server loop */
+
+
+/*
+ * Param struct for connection handler threads
+ **/
+struct connection_handler_args_t {
+    int socket_id;
+    char *client_ip;
+    pthread_mutex_t *tmpfile_lock;
+};
+
+
+/*
+ * Node struct for thread list
+ **/
+struct thread_list_t {
+    pthread_t thread_id;
+    struct thread_list_t *next;
+};
 
 
 /*
@@ -79,7 +99,7 @@ int bind_to_port(const char* port) {
 
         if (sock == -1)
             continue;
-    
+
         const int enable = 1; /* boolean integer flag */
         setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable));
         setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(enable));
@@ -116,7 +136,7 @@ ssize_t transfer_line(FILE *instream, FILE *outstream) {
     ssize_t result;
 
     result = getline(&buffer, &buflen, instream);
-    
+
     if (result > 0) {
         fputs(buffer, outstream);
         fflush(outstream);
@@ -168,6 +188,75 @@ void fork_and_exit() {
 }
 
 
+/*
+ * Thread function to handle incoming connections
+ * Needs to take care of its writelock and filestreams
+ * FIXME: Properly implement interruption using pthread_cancel and pthread_cleanup_push/pull
+ **/
+void *connection_handler(void *connection_handler_args) {
+    struct connection_handler_args_t *args = (struct connection_handler_args_t *)connection_handler_args;
+
+    /* thread can exit straight away while waiting for the lock */
+    while (pthread_mutex_trylock(args->tmpfile_lock) != 0) {
+        if (_doexit) {
+            goto connection_handler_early_exit;
+        }
+    }
+
+    FILE *fsock = fdopen(args->socket_id, "a+");
+    FILE *tmpfile = fopen(tmpfilename, "a");
+
+    setlinebuf(tmpfile);
+    setlinebuf(fsock);
+
+    ssize_t transres = transfer_line(fsock, tmpfile);
+
+    fclose(tmpfile);
+    pthread_mutex_unlock(args->tmpfile_lock);
+
+    if (transres == -1) {
+        syslog(LOG_PERROR, "Error receiving from %s", args->client_ip);
+        goto connection_handler_late_exit;
+    }
+    else {
+        syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, args->client_ip);
+    }
+
+    if (_doexit) {
+        goto connection_handler_late_exit;
+    }
+
+    tmpfile = fopen(tmpfilename, "r");
+    setlinebuf(tmpfile);
+
+    ssize_t transsum = 0;
+    while ((transres = transfer_line(tmpfile, fsock)) > 0) {
+        transsum += transres;
+    }
+
+    fclose(tmpfile);
+
+    if (transsum > 0) {
+        syslog(LOG_DEBUG, "Sent %ld bytes to %s", transsum, args->client_ip);
+    }
+    else {
+        syslog(LOG_PERROR, "Error sending to %s", args->client_ip);
+        goto connection_handler_late_exit;
+    }
+
+connection_handler_late_exit:
+    fclose(fsock);
+
+connection_handler_early_exit:
+    syslog(LOG_INFO, "Closed connection from %s", args->client_ip);
+
+    free(args->client_ip);
+    free(args);
+
+    return NULL;
+}
+
+
 int main(int argc, char* argv[]) {
     /* init syslog */
     openlog(syslog_ident, LOG_PERROR|LOG_PID, LOG_USER);
@@ -196,7 +285,7 @@ int main(int argc, char* argv[]) {
         fork_and_exit();
         setsid();
         fork_and_exit();
-        
+
         /* we have to change syslog flags for this */
         openlog(syslog_ident, LOG_PID, LOG_DAEMON);
     }
@@ -206,11 +295,16 @@ int main(int argc, char* argv[]) {
         syslog(LOG_PERROR, "Error listening on port %s!\n", default_port);
         exit(-1);
     }
-    
+
     fprintf(stdout, "Listening on %s\n", default_port);
 
     struct sockaddr clientaddr;
     socklen_t clientaddrlen = sizeof(clientaddr);
+
+    struct thread_list_t *children = NULL;
+
+    pthread_mutex_t tmpfile_lock;
+    pthread_mutex_init(&tmpfile_lock, NULL);
 
     /* server loop, exited by signals */
     while (!_doexit) {
@@ -222,41 +316,61 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        /* its actually some hazzle to generically get the client ip address */
         char *clientip = get_addr_str(&clientaddr);
-        
+
         syslog(LOG_INFO, "Accepted connection from %s", clientip);
 
-        FILE *fsock = fdopen(newsock, "a+");
-        FILE *tmpfile = fopen(tmpfilename, "a");
- 
-        setlinebuf(tmpfile);
-        setlinebuf(fsock);
-        
-        ssize_t transres = transfer_line(fsock, tmpfile);
+        struct thread_list_t *newborn = (struct thread_list_t *)malloc(sizeof(struct thread_list_t));
+        newborn->next = NULL;
 
-        if (transres == -1) {
-            syslog(LOG_PERROR, "Error receiving from %s", clientip);
-        }
-        else {
-            syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, clientip);
-        }
-        tmpfile = freopen(tmpfilename, "r", tmpfile);
+        struct connection_handler_args_t *connection_handler_args = (struct connection_handler_args_t *)malloc(sizeof(struct connection_handler_args_t));
+        connection_handler_args->socket_id = newsock;
+        connection_handler_args->tmpfile_lock = &tmpfile_lock;
+        connection_handler_args->client_ip = clientip;
 
-        while ((transres = transfer_line(tmpfile, fsock)) > 0) {
-            syslog(LOG_DEBUG, "Sent %ld bytes to %s", transres, clientip);
+        /* spawn thread to handle connection */
+        if (pthread_create(&newborn->thread_id, NULL, connection_handler, connection_handler_args) != 0) {
+            syslog(LOG_PERROR, "Error creating thread");
+            free(clientip);
+            free(connection_handler_args);
+            free(newborn);
+            continue;
         }
 
-        fclose(tmpfile);
-        fclose(fsock);
+        /* Family housekeeping:
+         * iterate through the list of child threads
+         * free/unlink finished threads on the way
+         * insert newborn thread at the very end
+         **/
+        struct thread_list_t **childcare = &children;
 
-        syslog(LOG_INFO, "Closed connection from %s", clientip);
+        while (*childcare != NULL) {
+            struct thread_list_t *child = *childcare;
 
-        free(clientip);
+            if (pthread_tryjoin_np(child->thread_id, NULL) == 0) {
+                /* Cleanup finished thread */
+                *childcare = child->next;
+                free(child);
+            }
+            else {
+                childcare = &(child->next);
+            }
+        }
+
+        *childcare = newborn;
     }
-    
+
     syslog(LOG_INFO, "Caught signal, exiting");
 
+    /* Wait for remaining threads */
+    for (struct thread_list_t *child = children; child != NULL; ) {
+        pthread_join(child->thread_id, NULL);
+        struct thread_list_t *next = child->next;
+        free(child);
+        child = next;
+    }
+
+    pthread_mutex_destroy(&tmpfile_lock);
     close(sock);
     unlink(tmpfilename); /* remove tempfile, note: posix has special tempfiles for this... */
 
