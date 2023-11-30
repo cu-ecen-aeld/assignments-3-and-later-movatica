@@ -246,14 +246,9 @@ int create_timestamp_timer(timer_t *timer_id, pthread_mutex_t *tmpfile_lock) {
 void *connection_handler(void *connection_handler_args) {
     struct connection_handler_args_t *args = (struct connection_handler_args_t *)connection_handler_args;
 
-    /* thread can exit straight away while waiting for the lock */
-    while (pthread_mutex_trylock(args->tmpfile_lock) != 0) {
-        if (_doexit) {
-            goto connection_handler_early_exit;
-        }
-    }
-
     FILE *fsock = fdopen(args->socket_id, "a+");
+
+    pthread_mutex_lock(args->tmpfile_lock);
     FILE *tmpfile = fopen(tmpfilename, "a");
 
     setlinebuf(tmpfile);
@@ -266,14 +261,10 @@ void *connection_handler(void *connection_handler_args) {
 
     if (transres == -1) {
         syslog(LOG_PERROR, "Error receiving from %s", args->client_ip);
-        goto connection_handler_late_exit;
+        goto exit;
     }
     else {
         syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, args->client_ip);
-    }
-
-    if (_doexit) {
-        goto connection_handler_late_exit;
     }
 
     tmpfile = fopen(tmpfilename, "r");
@@ -291,13 +282,11 @@ void *connection_handler(void *connection_handler_args) {
     }
     else {
         syslog(LOG_PERROR, "Error sending to %s", args->client_ip);
-        goto connection_handler_late_exit;
     }
 
-connection_handler_late_exit:
     fclose(fsock);
 
-connection_handler_early_exit:
+exit:
     syslog(LOG_INFO, "Closed connection from %s", args->client_ip);
 
     free(args->client_ip);
