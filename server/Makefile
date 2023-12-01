@@ -1,5 +1,7 @@
 EXE = aesdsocket
-OBJECTS = aesdsocket.o aesdsocket_connectionhandler.o aesdsocket_threadlist.o
+SOURCES = $(wildcard *.c)
+HEADERS = $(wildcard *.h)
+OBJECTS = $(SOURCES:%.c=%.o)
 
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -g -Wall -Wpedantic -Werror
@@ -9,11 +11,11 @@ all: $(EXE)
 
 $(EXE): $(OBJECTS)
 
-aesdsocket.o: aesdsocket.c aesdsocket.h aesdsocket_connectionhandler.h aesdsocket_threadlist.h
-aesdsocket_connectionhandler.o: aesdsocket_connectionhandler.c aesdsocket_connectionhandler.h
-aesdsocket_threadlist.o: aesdsocket_threadlist.c aesdsocket_threadlist.h
+$(EXE).o: $(HEADERS)
 
-aesdsocket.h aesdsocket_connectionhandler.h aesdsocket_threadlist.h:
+%.o: %.c %.h
+
+$(HEADERS):
 
 .PHONY: clean
 clean:
