@@ -279,16 +279,12 @@ int main(int argc, char* argv[]) {
         struct thread_list_t *newborn = (struct thread_list_t *)malloc(sizeof(struct thread_list_t));
         newborn->next = NULL;
 
-        struct connection_handler_args_t *connection_handler_args = (struct connection_handler_args_t *)malloc(sizeof(struct connection_handler_args_t));
-        connection_handler_args->socket_id = newsock;
-        connection_handler_args->tmpfile_lock = &tmpfile_lock;
-        connection_handler_args->client_ip = clientip;
+        struct connection_handler_args_t *connection_handler_args = connection_handler_create_args(newsock, clientip, &tmpfile_lock);
 
         /* spawn thread to handle connection */
         if (pthread_create(&newborn->thread_id, NULL, connection_handler, connection_handler_args) != 0) {
             syslog(LOG_PERROR, "Error creating thread");
-            free(clientip);
-            free(connection_handler_args);
+            connection_handler_destroy_args(&connection_handler_args);
             free(newborn);
             continue;
         }

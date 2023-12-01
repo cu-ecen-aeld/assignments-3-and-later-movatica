@@ -10,6 +10,24 @@
 extern const char *tmpfilename;
 
 
+struct connection_handler_args_t *connection_handler_create_args(int socket_id, char *client_ip, pthread_mutex_t *tmpfile_lock) {
+    struct connection_handler_args_t *args = malloc(sizeof(struct connection_handler_args_t));
+
+    args->socket_id = socket_id;
+    args->client_ip = client_ip;
+    args->tmpfile_lock = tmpfile_lock;
+
+    return args;
+}
+
+
+void connection_handler_destroy_args(struct connection_handler_args_t **args) {
+    free ((*args)->client_ip);
+    free (*args);
+    *args = NULL;
+}
+
+
 /*
  * Thread internal dynamic resources that need cleanup on exit.
  **/

@@ -16,6 +16,10 @@ struct connection_handler_args_t {
     pthread_mutex_t *tmpfile_lock;
 };
 
+struct connection_handler_args_t *connection_handler_create_args(int socket_id, char *client_ip, pthread_mutex_t *tmpfile_lock);
+
+void connection_handler_destroy_args(struct connection_handler_args_t **args);
+
 /*
  * Thread function to handle incoming connections
  **/
