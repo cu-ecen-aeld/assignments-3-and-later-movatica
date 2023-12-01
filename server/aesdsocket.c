@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 #include "aesdsocket_connectionhandler.h"
-
+#include "aesdsocket_threadlist.h"
 
 /* 
  * Config
@@ -32,15 +32,6 @@ const char *tmpfilename = "/var/tmp/aesdsocketdata";
  * Globals
  **/
 volatile bool _doexit = false; /* controls the server loop */
-
-
-/*
- * Node struct for thread list
- **/
-struct thread_list_t {
-    pthread_t thread_id;
-    struct thread_list_t *next;
-};
 
 
 /*
@@ -252,7 +243,7 @@ int main(int argc, char* argv[]) {
     struct sockaddr clientaddr;
     socklen_t clientaddrlen = sizeof(clientaddr);
 
-    struct thread_list_t *children = NULL;
+    struct threadlist_node_t *children = NULL;
 
     pthread_mutex_t tmpfile_lock;
     pthread_mutex_init(&tmpfile_lock, NULL);
@@ -276,8 +267,7 @@ int main(int argc, char* argv[]) {
 
         syslog(LOG_INFO, "Accepted connection from %s", clientip);
 
-        struct thread_list_t *newborn = (struct thread_list_t *)malloc(sizeof(struct thread_list_t));
-        newborn->next = NULL;
+        struct threadlist_node_t *newborn = threadlist_node_create();
 
         struct connection_handler_args_t *connection_handler_args = connection_handler_create_args(newsock, clientip, &tmpfile_lock);
 
@@ -289,38 +279,14 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        /* Family housekeeping:
-         * iterate through the list of child threads
-         * free/unlink finished threads on the way
-         * insert newborn thread at the very end
-         **/
-        struct thread_list_t **childcare = &children;
+        threadlist_attach(&children, newborn);
 
-        while (*childcare != NULL) {
-            struct thread_list_t *child = *childcare;
-
-            if (pthread_tryjoin_np(child->thread_id, NULL) == 0) {
-                /* Cleanup finished thread */
-                *childcare = child->next;
-                free(child);
-            }
-            else {
-                childcare = &(child->next);
-            }
-        }
-
-        *childcare = newborn;
     }
 
     syslog(LOG_INFO, "Caught signal, exiting");
 
     /* Wait for remaining threads */
-    for (struct thread_list_t *child = children; child != NULL; ) {
-        pthread_join(child->thread_id, NULL);
-        struct thread_list_t *next = child->next;
-        free(child);
-        child = next;
-    }
+    threadlist_cleanup(&children);
 
     close(sock);
     timer_delete(timestamp_timer_id);
