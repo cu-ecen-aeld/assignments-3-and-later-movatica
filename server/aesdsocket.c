@@ -17,6 +17,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "aesdsocket_connectionhandler.h"
+
 
 /* 
  * Config
@@ -30,16 +32,6 @@ const char *tmpfilename = "/var/tmp/aesdsocketdata";
  * Globals
  **/
 volatile bool _doexit = false; /* controls the server loop */
-
-
-/*
- * Param struct for connection handler threads
- **/
-struct connection_handler_args_t {
-    int socket_id;
-    char *client_ip;
-    pthread_mutex_t *tmpfile_lock;
-};
 
 
 /*
@@ -124,28 +116,6 @@ int bind_to_port(const char* port) {
     freeaddrinfo(sockinfo);
 
     return sock;
-}
-
-
-/* 
- * Copy line from instream to outstream.
- * Return number of bytes copied or -1 on error.
- **/
-ssize_t transfer_line(FILE *instream, FILE *outstream) {
-    char *buffer = NULL;
-    size_t buflen = 0;
-    ssize_t result;
-
-    result = getline(&buffer, &buflen, instream);
-
-    if (result > 0) {
-        fputs(buffer, outstream);
-        fflush(outstream);
-    }
-
-    free(buffer);
-
-    return result;
 }
 
 
@@ -235,64 +205,6 @@ int create_timestamp_timer(timer_t *timer_id, pthread_mutex_t *tmpfile_lock) {
     }
 
     return result;
-}
-
-
-/*
- * Thread function to handle incoming connections
- * Needs to take care of its writelock and filestreams
- * FIXME: Properly implement interruption using pthread_cancel and pthread_cleanup_push/pull
- **/
-void *connection_handler(void *connection_handler_args) {
-    struct connection_handler_args_t *args = (struct connection_handler_args_t *)connection_handler_args;
-
-    FILE *fsock = fdopen(args->socket_id, "a+");
-
-    pthread_mutex_lock(args->tmpfile_lock);
-    FILE *tmpfile = fopen(tmpfilename, "a");
-
-    setlinebuf(tmpfile);
-    setlinebuf(fsock);
-
-    ssize_t transres = transfer_line(fsock, tmpfile);
-
-    fclose(tmpfile);
-    pthread_mutex_unlock(args->tmpfile_lock);
-
-    if (transres == -1) {
-        syslog(LOG_PERROR, "Error receiving from %s", args->client_ip);
-        goto exit;
-    }
-    else {
-        syslog(LOG_DEBUG, "Received %ld bytes from %s", transres, args->client_ip);
-    }
-
-    tmpfile = fopen(tmpfilename, "r");
-    setlinebuf(tmpfile);
-
-    ssize_t transsum = 0;
-    while ((transres = transfer_line(tmpfile, fsock)) > 0) {
-        transsum += transres;
-    }
-
-    fclose(tmpfile);
-
-    if (transsum > 0) {
-        syslog(LOG_DEBUG, "Sent %ld bytes to %s", transsum, args->client_ip);
-    }
-    else {
-        syslog(LOG_PERROR, "Error sending to %s", args->client_ip);
-    }
-
-    fclose(fsock);
-
-exit:
-    syslog(LOG_INFO, "Closed connection from %s", args->client_ip);
-
-    free(args->client_ip);
-    free(args);
-
-    return NULL;
 }
 
 
